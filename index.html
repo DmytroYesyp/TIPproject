@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FastAPI Chat Client</title>
+    <style>
+        body { font-family: sans-serif; }
+        #messages { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; margin-bottom: 10px; }
+        #activeUsers { border: 1px solid #eee; padding: 10px; width: 200px; float: right; height: 300px; overflow-y: scroll; margin-left: 10px;}
+        #chatArea { display: flex; }
+        #messageInput { flex-grow: 1; padding: 8px; }
+        #sendButton { padding: 8px 15px; }
+    </style>
+</head>
+<body>
+    <h1>FastAPI Chat Client</h1>
+
+    <div style="margin-bottom: 20px;">
+        <label for="usernameInput">Username (for login):</label>
+        <input type="text" id="usernameInput" value="testuser">
+        <label for="passwordInput">Password:</label>
+        <input type="password" id="passwordInput" value="password">
+        <button onclick="loginAndConnect()">Login & Connect</button>
+        <span id="loginStatus" style="margin-left: 10px;">Not logged in.</span>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+        <label for="roomInput">Room ID:</label>
+        <input type="number" id="roomInput" value="1">
+        <button onclick="connectWebSocket()">Connect to Chat</button>
+        <span id="connectionStatus" style="margin-left: 10px;">Disconnected.</span>
+    </div>
+
+    <div id="chatArea">
+        <div style="flex-grow: 1;">
+            <div id="messages"></div>
+            <input type="text" id="messageInput" placeholder="Type your message...">
+            <button id="sendButton" onclick="sendMessage()">Send</button>
+        </div>
+        <div id="activeUsers">
+            <h3>Active Users:</h3>
+            <ul id="usersList"></ul>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let currentToken = null;
+        let currentUsername = null;
+
+        async function loginAndConnect() {
+            const username = document.getElementById('usernameInput').value;
+            const password = document.getElementById('passwordInput').value;
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: new URLSearchParams({ username: username, password: password })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    currentToken = data.access_token;
+                    currentUsername = username;
+                    document.getElementById('loginStatus').textContent = `Logged in as ${username}.`;
+                    console.log('Login successful:', data);
+                    // connectWebSocket(); // Optionally connect immediately after login
+                } else {
+                    const errorData = await response.json();
+                    document.getElementById('loginStatus').textContent = `Login failed: ${errorData.detail || response.statusText}`;
+                    console.error('Login failed:', errorData);
+                }
+            } catch (error) {
+                document.getElementById('loginStatus').textContent = `Login error: ${error}`;
+                console.error('Login error:', error);
+            }
+        }
+
+        function connectWebSocket() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log("Already connected.");
+                return;
+            }
+            if (!currentToken) {
+                alert("Please log in first!");
+                return;
+            }
+
+            const room_id = document.getElementById('roomInput').value;
+            if (!room_id) {
+                alert("Please enter a Room ID!");
+                return;
+            }
+
+            const websocketUrl = `ws://127.0.0.1:8000/ws/chat/${room_id}?token=${currentToken}`;
+            ws = new WebSocket(websocketUrl);
+
+            ws.onopen = function(event) {
+                document.getElementById('connectionStatus').textContent = `Connected to Room ${room_id}`;
+                console.log("WebSocket opened:", event);
+                document.getElementById('messages').innerHTML = ''; // Clear old messages
+            };
+
+            ws.onmessage = function(event) {
+                const messageArea = document.getElementById('messages');
+                const messageData = JSON.parse(event.data);
+
+                if (messageData.type === "chat_message") {
+                    const p = document.createElement('p');
+                    p.textContent = `${messageData.sender_username} (${new Date(messageData.timestamp).toLocaleTimeString()}): ${messageData.text}`;
+                    messageArea.appendChild(p);
+                    messageArea.scrollTop = messageArea.scrollHeight; // Auto-scroll to bottom
+                } else if (messageData.type === "active_users_update") {
+                    const usersList = document.getElementById('usersList');
+                    usersList.innerHTML = ''; // Clear current list
+                    messageData.users.forEach(user => {
+                        const li = document.createElement('li');
+                        li.textContent = user;
+                        usersList.appendChild(li);
+                    });
+                }
+            };
+
+            ws.onclose = function(event) {
+                document.getElementById('connectionStatus').textContent = `Disconnected from Room ${room_id} (Code: ${event.code}, Reason: ${event.reason})`;
+                console.log("WebSocket closed:", event);
+                document.getElementById('usersList').innerHTML = ''; // Clear active users
+            };
+
+            ws.onerror = function(error) {
+                document.getElementById('connectionStatus').textContent = `WebSocket Error: ${error.message}`;
+                console.error("WebSocket error:", error);
+            };
+        }
+
+        function sendMessage() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const messageInput = document.getElementById('messageInput');
+                const messageText = messageInput.value;
+                if (messageText.trim() !== '') {
+                    ws.send(JSON.stringify({ text: messageText }));
+                    messageInput.value = ''; // Clear input field
+                }
+            } else {
+                alert("Not connected to WebSocket. Please connect first.");
+            }
+        }
+    </script>
+</body>
+</html>
